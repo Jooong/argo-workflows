@@ -138,7 +138,7 @@ func (m *Metrics) garbageCollector(ctx context.Context) {
 			return
 		case <-ticker.C:
 			for key, metric := range m.customMetrics {
-				if time.Since(metric.lastUpdated) > m.metricsConfig.TTL {
+				if (time.Since(metric.lastUpdated) > m.metricsConfig.TTL) && (!metric.isRealtimeIncomplete) {
 					delete(m.customMetrics, key)
 				}
 			}

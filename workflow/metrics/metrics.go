@@ -40,8 +40,9 @@ func (s ServerConfig) SameServerAs(other ServerConfig) bool {
 }
 
 type metric struct {
-	metric      prometheus.Metric
-	lastUpdated time.Time
+	metric               prometheus.Metric
+	lastUpdated          time.Time
+	isRealtimeIncomplete bool
 }
 
 type Metrics struct {
@@ -176,7 +177,7 @@ func (m *Metrics) GetCustomMetric(key string) prometheus.Metric {
 	return m.customMetrics[key].metric
 }
 
-func (m *Metrics) UpsertCustomMetric(key string, ownerKey string, newMetric prometheus.Metric, realtime bool) error {
+func (m *Metrics) UpsertCustomMetric(key string, ownerKey string, newMetric prometheus.Metric, realtime bool, isCompleted bool) error {
 	m.mutex.Lock()
 	defer m.mutex.Unlock()
 
@@ -190,7 +191,7 @@ func (m *Metrics) UpsertCustomMetric(key string, ownerKey string, newMetric prom
 	} else {
 		m.metricNameHelps[name] = help
 	}
-	m.customMetrics[key] = metric{metric: newMetric, lastUpdated: time.Now()}
+	m.customMetrics[key] = metric{metric: newMetric, lastUpdated: time.Now(), isRealtimeIncomplete: realtime && !isCompleted}
 
 	// If this is a realtime metric, track it
 	if realtime {

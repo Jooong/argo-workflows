@@ -68,12 +68,12 @@ func TestMetrics(t *testing.T) {
 
 	assert.Nil(t, m.GetCustomMetric("does-not-exist"))
 
-	err := m.UpsertCustomMetric("metric", "", newCounter("test", "test", nil), false)
+	err := m.UpsertCustomMetric("metric", "", newCounter("test", "test", nil), false, false)
 	if assert.NoError(t, err) {
 		assert.NotNil(t, m.GetCustomMetric("metric"))
 	}
 
-	err = m.UpsertCustomMetric("metric2", "", newCounter("test", "new test", nil), false)
+	err = m.UpsertCustomMetric("metric2", "", newCounter("test", "new test", nil), false, false)
 	assert.Error(t, err)
 
 	badMetric, err := constructOrUpdateGaugeMetric(nil, &v1alpha1.Prometheus{
@@ -85,7 +85,7 @@ func TestMetrics(t *testing.T) {
 		},
 	})
 	if assert.NoError(t, err) {
-		err = m.UpsertCustomMetric("asdf", "", badMetric, false)
+		err = m.UpsertCustomMetric("asdf", "", badMetric, false, false)
 		assert.Error(t, err)
 	}
 }
@@ -108,7 +108,7 @@ func TestMetricGC(t *testing.T) {
 	m := New(config, config)
 	assert.Len(t, m.customMetrics, 0)
 
-	err := m.UpsertCustomMetric("metric", "", newCounter("test", "test", nil), false)
+	err := m.UpsertCustomMetric("metric", "", newCounter("test", "test", nil), false, false)
 	if assert.NoError(t, err) {
 		assert.Len(t, m.customMetrics, 1)
 	}
@@ -158,7 +158,7 @@ func TestRealTimeMetricDeletion(t *testing.T) {
 	rtMetric, err := ConstructRealTimeGaugeMetric(&v1alpha1.Prometheus{Name: "name", Help: "hello"}, func() float64 { return 0.0 })
 	assert.NoError(t, err)
 
-	err = m.UpsertCustomMetric("metrickey", "123", rtMetric, true)
+	err = m.UpsertCustomMetric("metrickey", "123", rtMetric, true, false)
 	assert.NoError(t, err)
 	assert.NotEmpty(t, m.workflows["123"])
 	assert.Len(t, m.customMetrics, 1)
@@ -170,7 +170,7 @@ func TestRealTimeMetricDeletion(t *testing.T) {
 	metric, err := ConstructOrUpdateMetric(nil, &v1alpha1.Prometheus{Name: "name", Help: "hello", Gauge: &v1alpha1.Gauge{Value: "1"}})
 	assert.NoError(t, err)
 
-	err = m.UpsertCustomMetric("metrickey", "456", metric, false)
+	err = m.UpsertCustomMetric("metrickey", "456", metric, false, false)
 	assert.NoError(t, err)
 	assert.Empty(t, m.workflows["456"])
 	assert.Len(t, m.customMetrics, 1)
@@ -178,4 +178,47 @@ func TestRealTimeMetricDeletion(t *testing.T) {
 	m.StopRealtimeMetricsForKey("456")
 	assert.Empty(t, m.workflows["456"])
 	assert.Len(t, m.customMetrics, 1)
+}
+
+func TestIncompleteRealTimeMetricGC(t *testing.T) {
+	config := ServerConfig{
+		Enabled: true,
+		Path:    DefaultMetricsServerPath,
+		Port:    DefaultMetricsServerPort,
+		TTL:     1 * time.Second,
+	}
+	m := New(config, config)
+
+	rtMetric, err := ConstructRealTimeGaugeMetric(&v1alpha1.Prometheus{Name: "name", Help: "hello"}, func() float64 { return 0.0 })
+	assert.NoError(t, err)
+
+	// incomplete realtime gauge
+	err = m.UpsertCustomMetric("metrickey", "123", rtMetric, true, false)
+	assert.NoError(t, err)
+	assert.NotEmpty(t, m.workflows["123"])
+	assert.Len(t, m.customMetrics, 1)
+	assert.Equal(t, true, m.customMetrics["metrickey"].isRealtimeIncomplete)
+
+	// collect garbage
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.garbageCollector(ctx)
+
+	// sleep for 1 tick
+	time.Sleep(1*time.Second + 100*time.Millisecond)
+
+	// Check if they still exist
+	assert.NotEmpty(t, m.workflows["123"])
+	assert.Len(t, m.customMetrics, 1)
+
+	// mark the metric to be completed
+	err = m.UpsertCustomMetric("metrickey", "123", rtMetric, true, true)
+	assert.NoError(t, err)
+	assert.Equal(t, false, m.customMetrics["metrickey"].isRealtimeIncomplete)
+
+	// sleep for 2 tick
+	time.Sleep(2*time.Second + 100*time.Millisecond)
+
+	// check if the metric is deleted
+	assert.Len(t, m.customMetrics, 0)
 }
